@@ -16,16 +16,17 @@ Shell-GPT 自动安装和配置工具,专门为**国内教学场景**优化。
 ## 快速开始
 
 ```bash
-# 推荐:用 python -m,不依赖 PATH 配置
 pip install -i https://repo.huaweicloud.com/repository/pypi/simple auto-shell-gpt && \
-  python -m setup_shell_gpt --auto --key sk-YOUR_SILICONFLOW_KEY
+  ~/.local/bin/auto-shell-gpt --auto --key sk-YOUR_SILICONFLOW_KEY
 ```
 
-> 💡 为什么用 `python -m setup_shell_gpt` 而不是直接 `auto-shell-gpt`?
+> 💡 **不要**用 `python -m setup_shell_gpt`,也不要直接敲 `auto-shell-gpt`,原因:
+> - **`python -m setup_shell_gpt`**: 把 cwd 放在 sys.path 第一位,如果当前目录或 home 目录有同名老脚本,会被它覆盖而不是用 pip 装的新版本(教学环境常见预置老脚本就触发这个坑)
+> - **直接敲 `auto-shell-gpt`**: 依赖 `~/.local/bin` 在 PATH 里,新建账号第一次登录时这个目录不存在,PATH 里没有它
 >
-> pip `--user` 把 CLI 脚本装到 `~/.local/bin/`,但**新建账号第一次登录时这个目录还不存在**,导致它不在 PATH 里。用 `python -m <模块名>` 直接调用,**绕开整个 PATH 问题**。
+> **直接用绝对路径 `~/.local/bin/auto-shell-gpt`** 同时绕开两个坑:不查 PATH、不走 cwd 模块搜索,**总是**调用 pip 装的最新版。
 >
-> 如果你想用短命令 `auto-shell-gpt`,把 `~/.local/bin` 加到 PATH:
+> 如果嫌长,把 `~/.local/bin` 加进 PATH 后可以敲 `auto-shell-gpt`:
 > ```bash
 > echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc && source ~/.bashrc
 > ```
@@ -46,7 +47,7 @@ auto-shell-gpt           # 进入交互菜单
 ## 卸载
 
 ```bash
-python -m setup_shell_gpt --uninstall
+~/.local/bin/auto-shell-gpt --uninstall
 ```
 
 会清理:`~/.config/shell_gpt/`、`/tmp/chat_cache_*`、`/tmp/cache_*`、`~/.cache/shell_gpt`、`~/.local/share/sgpt-portable-python/`、`~/.local/bin/sgpt`。
