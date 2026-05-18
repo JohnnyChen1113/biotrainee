@@ -4,10 +4,14 @@ Shell-GPT 自动安装和配置脚本
 为Linux新手用户提供一键安装和配置Shell-GPT的便捷工具
 
 @Author: 卖萌哥
-@Version: 1.11.1
-@Date: 2026-05-17
+@Version: 1.12.0
+@Date: 2026-05-18
 @Description: 支持自动安装requests依赖、模型切换、API密钥设置等功能
-@Update: v1.11.1 - 修复安装后读取 shell-gpt 版本时误触发交互式 API key 输入：
+@Update: v1.12.0 - 新增 _ensure_local_bin_in_path()：main() 启动时自动检测
+                  ~/.local/bin 是否在 PATH 里，缺则幂等追加 export 到 ~/.bashrc / ~/.zshrc，
+                  解决 pip --user 装 CLI entry script 后新 shell command not found 的痛点。
+                  学生第一次跑用 export PATH 临时救场，本函数永久持久化，第二次新 shell 直接短命令。
+         v1.11.1 - 修复安装后读取 shell-gpt 版本时误触发交互式 API key 输入：
                   不再通过 `import sgpt` 获取版本号，改用 `python -m pip show shell-gpt`；
                   fallback 补丁定位也改为读取安装元数据，避免导入 sgpt 包产生副作用
          v1.11.0 - 修复 portable Python 镜像下载和模型探测稳定性：
@@ -1500,11 +1504,57 @@ def auto_install(api_key: str) -> bool:
     return True
 
 
+def _ensure_local_bin_in_path() -> None:
+    """
+    确保 ~/.local/bin 在 PATH 里：
+      - 新建账号第一次登录时 ~/.local/bin 不存在，.profile/.bashrc 的检查会跳过它
+      - pip --user 装完包后 ~/.local/bin 才出现，但当前 shell 的 PATH 已定型
+      - 后续学生敲 auto-shell-gpt 会 command not found
+
+    本函数幂等地把 export 行追加到 ~/.bashrc 和 ~/.zshrc（仅当后者已存在）。
+    完成后打印一行提示。已经配好的不打扰。
+    """
+    local_bin = str(Path.home() / ".local" / "bin")
+    current_path = os.environ.get("PATH", "")
+    # 已在当前 PATH 里 → 啥都不用做
+    if local_bin in current_path.split(":"):
+        return
+
+    export_line = 'export PATH="$HOME/.local/bin:$PATH"'
+    rc_files: List[Path] = [Path.home() / ".bashrc"]
+    zshrc = Path.home() / ".zshrc"
+    if zshrc.exists():
+        rc_files.append(zshrc)
+
+    updated: List[str] = []
+    for rc in rc_files:
+        try:
+            existing = rc.read_text() if rc.exists() else ""
+        except Exception:
+            existing = ""
+        # 幂等检查：精确匹配那一行（含/不含 export 关键字、有无前导空格都算）
+        if any(line.strip() == export_line for line in existing.splitlines()):
+            continue
+        # 追加到末尾，前面带一个空行作分隔，加个注释让用户知道是谁加的
+        try:
+            with open(rc, "a") as f:
+                f.write("\n# Added by auto-shell-gpt: 让 pip --user 装的 CLI 命令进入 PATH\n")
+                f.write(export_line + "\n")
+            updated.append(str(rc))
+        except Exception:
+            pass
+
+    if updated:
+        print(f"💡 已把 ~/.local/bin 加进 {', '.join(updated)}")
+        print(f"   下次新开终端可以直接敲 'auto-shell-gpt' / 'sgpt-installer'，不用绝对路径")
+
+
 def main():
     """主函数"""
+    _ensure_local_bin_in_path()
     # 解析命令行参数
     parser = argparse.ArgumentParser(
-        description='Shell-GPT 自动安装配置脚本 v1.11.1',
+        description='Shell-GPT 自动安装配置脚本 v1.12.0',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 示例用法:
@@ -1521,7 +1571,7 @@ def main():
 
     args = parser.parse_args()
 
-    print("🚀 Shell-GPT 自动安装配置脚本 v1.11.1")
+    print("🚀 Shell-GPT 自动安装配置脚本 v1.12.0")
     print("🔒 隐私保护 | 🚄 自动选择最快pip镜像")
     print("=" * 50)
 
