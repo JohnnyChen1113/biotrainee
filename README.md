@@ -16,9 +16,19 @@ Shell-GPT 自动安装和配置工具,专门为**国内教学场景**优化。
 ## 快速开始
 
 ```bash
-pip install -i https://mirrors.aliyun.com/pypi/simple auto-shell-gpt
-auto-shell-gpt --auto --key sk-YOUR_SILICONFLOW_KEY
+# 推荐:用 python -m,不依赖 PATH 配置
+pip install -i https://repo.huaweicloud.com/repository/pypi/simple auto-shell-gpt && \
+  python -m setup_shell_gpt --auto --key sk-YOUR_SILICONFLOW_KEY
 ```
+
+> 💡 为什么用 `python -m setup_shell_gpt` 而不是直接 `auto-shell-gpt`?
+>
+> pip `--user` 把 CLI 脚本装到 `~/.local/bin/`,但**新建账号第一次登录时这个目录还不存在**,导致它不在 PATH 里。用 `python -m <模块名>` 直接调用,**绕开整个 PATH 问题**。
+>
+> 如果你想用短命令 `auto-shell-gpt`,把 `~/.local/bin` 加到 PATH:
+> ```bash
+> echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc && source ~/.bashrc
+> ```
 
 装完之后:
 
@@ -36,7 +46,7 @@ auto-shell-gpt           # 进入交互菜单
 ## 卸载
 
 ```bash
-auto-shell-gpt --uninstall
+python -m setup_shell_gpt --uninstall
 ```
 
 会清理:`~/.config/shell_gpt/`、`/tmp/chat_cache_*`、`/tmp/cache_*`、`~/.cache/shell_gpt`、`~/.local/share/sgpt-portable-python/`、`~/.local/bin/sgpt`。
