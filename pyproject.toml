@@ -1,0 +1,48 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "auto-shell-gpt"
+version = "1.11.1"
+description = "Shell-GPT 自动安装和配置工具：对接 SiliconFlow API，全程国内镜像，专为教学场景设计"
+readme = "README.md"
+requires-python = ">=3.7"
+license = {text = "MIT"}
+keywords = ["shell-gpt", "sgpt", "siliconflow", "llm", "installer", "教学", "bioinformatics"]
+authors = [
+    {name = "卖萌哥"},
+]
+dependencies = [
+    "requests>=2.25",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Education",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: MacOS",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.7",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Utilities",
+    "Natural Language :: Chinese (Simplified)",
+]
+
+[project.urls]
+Homepage = "https://github.com/JohnnyChen1113/biotrainee"
+Repository = "https://github.com/JohnnyChen1113/biotrainee"
+Issues = "https://github.com/JohnnyChen1113/biotrainee/issues"
+
+[project.scripts]
+auto-shell-gpt = "setup_shell_gpt:main"
+sgpt-installer = "setup_shell_gpt:main"
+
+[tool.setuptools]
+py-modules = ["setup_shell_gpt"]

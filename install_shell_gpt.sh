@@ -1,17 +1,18 @@
 #!/bin/bash
 #
 # Shell-GPT 一键安装脚本
-# 支持 jsDelivr / Cloudflare Pages / GitHub 多源下载，自动选择可用源
+# 支持 腾讯云 COS / jsDelivr / Cloudflare Pages / GitHub 多源下载，自动选择可用源
 #
-# 使用方法（首选 jsDelivr，国内访问稳定且自动同步 GitHub）:
-#   bash <(curl -fsSL https://cdn.jsdelivr.net/gh/JohnnyChen1113/biotrainee@main/install_shell_gpt.sh)
+# 使用方法（首选腾讯云 COS，国内严格白名单网络也能用）:
+#   bash <(curl -fsSL https://auto-shell-gpt-1254260590.cos.ap-nanjing.myqcloud.com/install_shell_gpt.sh)
 #
 # 备用入口:
-#   bash <(curl -fsSL https://biotrainee.pages.dev/install_shell_gpt.sh)         # Cloudflare Pages（部分国内 ISP 可能墙）
+#   bash <(curl -fsSL https://cdn.jsdelivr.net/gh/JohnnyChen1113/biotrainee@main/install_shell_gpt.sh)
+#   bash <(curl -fsSL https://biotrainee.pages.dev/install_shell_gpt.sh)         # Cloudflare Pages
 #   bash <(curl -fsSL https://raw.githubusercontent.com/JohnnyChen1113/biotrainee/main/install_shell_gpt.sh)
 #
 # @Author: 卖萌哥
-# @Version: 1.0.4
+# @Version: 1.0.5
 #
 
 echo "========================================"
@@ -23,7 +24,9 @@ REPO_OWNER="${SGPT_REPO_OWNER:-JohnnyChen1113}"
 REPO_NAME="${SGPT_REPO_NAME:-biotrainee}"
 REPO_BRANCH="${SGPT_REPO_BRANCH:-main}"
 SETUP_FILE="setup_shell_gpt.py"
-# jsDelivr 自动从 GitHub 同步，国内有 CDN 节点，零配置即可用
+# 腾讯云 COS 首选源（国内任何 ISP 都通，包括严格白名单网络）
+COS_BASE="${SGPT_COS_BASE:-https://auto-shell-gpt-1254260590.cos.ap-nanjing.myqcloud.com}"
+# jsDelivr 自动从 GitHub 同步，部分国内网络可用
 JSDELIVR_BASE="${SGPT_JSDELIVR_BASE:-https://cdn.jsdelivr.net/gh/${REPO_OWNER:-JohnnyChen1113}/${REPO_NAME:-biotrainee}@${REPO_BRANCH:-main}}"
 # Cloudflare Pages 备用（部分国内 ISP 会被墙，所以只做 fallback）
 CF_PAGES_HOST="${SGPT_CF_PAGES_HOST:-biotrainee.pages.dev}"
@@ -66,6 +69,7 @@ build_script_urls() {
     fi
 
     cat <<EOF
+${COS_BASE}/${SETUP_FILE}
 ${JSDELIVR_BASE}/${SETUP_FILE}
 https://${CF_PAGES_HOST}/${SETUP_FILE}
 https://raw.githubusercontent.com/${REPO_OWNER}/${REPO_NAME}/${REPO_BRANCH}/${SETUP_FILE}
