@@ -1,18 +1,17 @@
 #!/bin/bash
 #
 # Shell-GPT 一键安装脚本
-# 支持 Cloudflare Pages / Gitee / GitCode / jsDelivr / GitHub 多源下载，自动选择可用源
+# 支持 jsDelivr / Cloudflare Pages / GitHub 多源下载，自动选择可用源
 #
-# 使用方法（首选 CF Pages，国内访问最稳）:
-#   bash <(curl -fsSL https://biotrainee.pages.dev/install_shell_gpt.sh)
-#
-# 备用入口:
-#   bash <(curl -fsSL https://gitee.com/JohnnyChen1113/biotrainee/raw/main/install_shell_gpt.sh)
-#   bash <(curl -fsSL https://gitcode.com/JohnnyChen1113/biotrainee/raw/main/install_shell_gpt.sh)
+# 使用方法（首选 jsDelivr，国内访问稳定且自动同步 GitHub）:
 #   bash <(curl -fsSL https://cdn.jsdelivr.net/gh/JohnnyChen1113/biotrainee@main/install_shell_gpt.sh)
 #
+# 备用入口:
+#   bash <(curl -fsSL https://biotrainee.pages.dev/install_shell_gpt.sh)         # Cloudflare Pages（部分国内 ISP 可能墙）
+#   bash <(curl -fsSL https://raw.githubusercontent.com/JohnnyChen1113/biotrainee/main/install_shell_gpt.sh)
+#
 # @Author: 卖萌哥
-# @Version: 1.0.3
+# @Version: 1.0.4
 #
 
 echo "========================================"
@@ -24,7 +23,9 @@ REPO_OWNER="${SGPT_REPO_OWNER:-JohnnyChen1113}"
 REPO_NAME="${SGPT_REPO_NAME:-biotrainee}"
 REPO_BRANCH="${SGPT_REPO_BRANCH:-main}"
 SETUP_FILE="setup_shell_gpt.py"
-# Cloudflare Pages 自动从 GitHub main 分支同步，国内访问最稳，作为默认首选源
+# jsDelivr 自动从 GitHub 同步，国内有 CDN 节点，零配置即可用
+JSDELIVR_BASE="${SGPT_JSDELIVR_BASE:-https://cdn.jsdelivr.net/gh/${REPO_OWNER:-JohnnyChen1113}/${REPO_NAME:-biotrainee}@${REPO_BRANCH:-main}}"
+# Cloudflare Pages 备用（部分国内 ISP 会被墙，所以只做 fallback）
 CF_PAGES_HOST="${SGPT_CF_PAGES_HOST:-biotrainee.pages.dev}"
 
 # 检查 Python
@@ -65,10 +66,8 @@ build_script_urls() {
     fi
 
     cat <<EOF
+${JSDELIVR_BASE}/${SETUP_FILE}
 https://${CF_PAGES_HOST}/${SETUP_FILE}
-https://gitee.com/${REPO_OWNER}/${REPO_NAME}/raw/${REPO_BRANCH}/${SETUP_FILE}
-https://gitcode.com/${REPO_OWNER}/${REPO_NAME}/raw/${REPO_BRANCH}/${SETUP_FILE}
-https://cdn.jsdelivr.net/gh/${REPO_OWNER}/${REPO_NAME}@${REPO_BRANCH}/${SETUP_FILE}
 https://raw.githubusercontent.com/${REPO_OWNER}/${REPO_NAME}/${REPO_BRANCH}/${SETUP_FILE}
 EOF
 }
@@ -106,7 +105,7 @@ EOF
     echo "❌ 所有下载源都失败了" >&2
     echo "" >&2
     echo "请尝试手动下载运行:" >&2
-    echo "  curl -fsSL -o setup_shell_gpt.py https://${CF_PAGES_HOST}/${SETUP_FILE}" >&2
+    echo "  curl -fsSL -o setup_shell_gpt.py ${JSDELIVR_BASE}/${SETUP_FILE}" >&2
     echo "  python3 setup_shell_gpt.py" >&2
     rm -f "$tmp_file"
     return 1
