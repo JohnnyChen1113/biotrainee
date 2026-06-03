@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "auto-shell-gpt"
-version = "1.11.1"
+version = "1.12.1"
 description = "Shell-GPT 自动安装和配置工具：对接 SiliconFlow API，全程国内镜像，专为教学场景设计"
 readme = "README.md"
 requires-python = ">=3.7"

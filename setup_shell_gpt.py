@@ -4,10 +4,11 @@ Shell-GPT 自动安装和配置脚本
 为Linux新手用户提供一键安装和配置Shell-GPT的便捷工具
 
 @Author: 卖萌哥
-@Version: 1.12.0
-@Date: 2026-05-18
+@Version: 1.12.1
+@Date: 2026-06-03
 @Description: 支持自动安装requests依赖、模型切换、API密钥设置等功能
-@Update: v1.12.0 - 新增 _ensure_local_bin_in_path()：main() 启动时自动检测
+@Update: v1.12.1 - 新增 deepseek-ai/DeepSeek-V4-Pro，并设置为默认优先模型
+         v1.12.0 - 新增 _ensure_local_bin_in_path()：main() 启动时自动检测
                   ~/.local/bin 是否在 PATH 里，缺则幂等追加 export 到 ~/.bashrc / ~/.zshrc，
                   解决 pip --user 装 CLI entry script 后新 shell command not found 的痛点。
                   学生第一次跑用 export PATH 临时救场，本函数永久持久化，第二次新 shell 直接短命令。
@@ -57,7 +58,7 @@ Shell-GPT 自动安装和配置脚本
                   pip 安装 shell-gpt 时直通输出，消除"卡住"假象
          v1.4.0 - 真实可用性检测：仅靠 /v1/models 的目录无法反映 key 实际能调用哪些模型，
                   现在通过并发 max_tokens=1 的 chat completions 探测，保留真正 200 的模型
-                  显式白名单 ALLOWED_MODELS 替代厂商关键字匹配（共 9 个模型）
+                  显式白名单 ALLOWED_MODELS 替代厂商关键字匹配（共 10 个模型）
                   默认模型改为 deepseek-ai/DeepSeek-V4-Flash（SF 默认即非思考模式）
          v1.3.0 - 代码重构优化：缓存镜像检测结果、合并API请求函数、简化验证流程
          v1.2.0 - 新增pip镜像源速度检测功能，自动选择最快镜像安装
@@ -486,6 +487,7 @@ def verify_models_in_parallel(
 
 
 ALLOWED_MODELS: List[str] = [
+    "deepseek-ai/DeepSeek-V4-Pro",
     "deepseek-ai/DeepSeek-V4-Flash",
     "MiniMaxAI/MiniMax-M2.5",
     "deepseek-ai/DeepSeek-V3.2",
@@ -538,8 +540,8 @@ def filter_models(available_models: List[str]) -> List[str]:
 
 
 def select_default_model(available_models: List[str]) -> str:
-    """默认模型 = ALLOWED_MODELS 中第一个真实可用的（即 DeepSeek-V4-Flash 优先）。"""
-    return available_models[0] if available_models else "deepseek-ai/DeepSeek-V4-Flash"
+    """默认模型 = ALLOWED_MODELS 中第一个真实可用的（即 DeepSeek-V4-Pro 优先）。"""
+    return available_models[0] if available_models else "deepseek-ai/DeepSeek-V4-Pro"
 
 
 """
@@ -1420,7 +1422,11 @@ def switch_model(api_key: str):
         print(f"{i:2d}. {model}")
 
     print("\n🎯 推荐模型:")
-    recommended_models = ['deepseek-ai/DeepSeek-V4-Flash', 'deepseek-ai/DeepSeek-V3.2']
+    recommended_models = [
+        'deepseek-ai/DeepSeek-V4-Pro',
+        'deepseek-ai/DeepSeek-V4-Flash',
+        'deepseek-ai/DeepSeek-V3.2',
+    ]
     for model in recommended_models:
         if model in available_models:
             print(f"⭐ {model}")
@@ -1477,7 +1483,7 @@ def auto_install(api_key: str) -> bool:
     available_models = get_available_models_cached(api_key, show_progress=True)
     if not available_models:
         print("⚠️  警告: 无可用模型，将使用默认配置")
-        default_model = "deepseek-ai/DeepSeek-V4-Flash"
+        default_model = "deepseek-ai/DeepSeek-V4-Pro"
     else:
         default_model = select_default_model(available_models)
         print(f"✅ 找到 {len(available_models)} 个真实可用模型")
@@ -1554,7 +1560,7 @@ def main():
     _ensure_local_bin_in_path()
     # 解析命令行参数
     parser = argparse.ArgumentParser(
-        description='Shell-GPT 自动安装配置脚本 v1.12.0',
+        description='Shell-GPT 自动安装配置脚本 v1.12.1',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 示例用法:
@@ -1571,7 +1577,7 @@ def main():
 
     args = parser.parse_args()
 
-    print("🚀 Shell-GPT 自动安装配置脚本 v1.12.0")
+    print("🚀 Shell-GPT 自动安装配置脚本 v1.12.1")
     print("🔒 隐私保护 | 🚄 自动选择最快pip镜像")
     print("=" * 50)
 

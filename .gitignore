@@ -1,0 +1,8 @@
+.DS_Store
+__pycache__/
+*.py[cod]
+build/
+dist/
+*.egg-info/
+DEBUG_FOR_CODEX.md
+HANDOFF_FOR_CLAUDE.md
