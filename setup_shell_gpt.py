@@ -4,10 +4,15 @@ Shell-GPT 自动安装和配置脚本
 为Linux新手用户提供一键安装和配置Shell-GPT的便捷工具
 
 @Author: 卖萌哥
-@Version: 1.12.1
-@Date: 2026-06-03
+@Version: 1.13.0
+@Date: 2026-07-13
 @Description: 支持自动安装requests依赖、模型切换、API密钥设置等功能
-@Update: v1.12.1 - 新增 deepseek-ai/DeepSeek-V4-Pro，并设置为默认优先模型
+@Update: v1.13.0 - 新增 SiliconFlow / 自定义 OpenAI 兼容 API 供应商选择；
+                  自定义模式支持设置 API Base URL 与模型，并显示常见供应商示例。
+                  一键卸载新增 --yes 免确认模式，并修复 sgpt 文件包装脚本无法删除的问题。
+         v1.12.2 - 修复 portable Python 环境缺少 click 导致 sgpt 无法启动：
+                  安装 shell-gpt 时显式安装 click，并在创建包装脚本前验证 click 可导入。
+         v1.12.1 - 新增 deepseek-ai/DeepSeek-V4-Pro，并设置为默认优先模型
          v1.12.0 - 新增 _ensure_local_bin_in_path()：main() 启动时自动检测
                   ~/.local/bin 是否在 PATH 里，缺则幂等追加 export 到 ~/.bashrc / ~/.zshrc，
                   解决 pip --user 装 CLI entry script 后新 shell command not found 的痛点。
@@ -76,9 +81,10 @@ import argparse
 import time
 import urllib.request
 import urllib.error
+from urllib.parse import urlparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import List, Optional, Tuple, Dict
+from typing import List, Optional, Tuple, Dict, NamedTuple
 
 # pip 镜像源列表（拿掉 PyPI 官方、PKU、中科大：前者国内基本不通；PKU/USTC 实测同步不稳）
 PIP_MIRRORS: Dict[str, str] = {
@@ -337,7 +343,7 @@ def test_api_connection(api_key: str, return_models: bool = False):
         return_models=False: bool (成功/失败)
         return_models=True: List[str] (模型列表，失败返回空列表)
     """
-    url = "https://api.siliconflow.cn/v1/models?sub_type=chat"
+    url = f"{SILICONFLOW_API_BASE_URL}/models?sub_type=chat"
     headers = {"Authorization": f"Bearer {api_key}"}
 
     try:
@@ -410,7 +416,7 @@ def verify_model_availability_with_reason(
     /v1/models 只是目录，不代表当前 key 有权限或额度，此函数才是真实可用性。
     对限流/服务端抖动做少量重试，避免并发探测时把临时 429/5xx 误判成模型不可用。
     """
-    url = "https://api.siliconflow.cn/v1/chat/completions"
+    url = f"{SILICONFLOW_API_BASE_URL}/chat/completions"
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
@@ -486,8 +492,21 @@ def verify_models_in_parallel(
     return [m for m in models if results.get(m)]
 
 
+SILICONFLOW_API_BASE_URL = "https://api.siliconflow.cn/v1"
+SILICONFLOW_DEFAULT_MODEL = "deepseek-ai/DeepSeek-V4-Pro"
+
+
+class ApiProvider(NamedTuple):
+    """一次安装所需的 OpenAI 兼容 API 设置。"""
+
+    name: str
+    api_base_url: str
+    default_model: str
+    is_siliconflow: bool
+
+
 ALLOWED_MODELS: List[str] = [
-    "deepseek-ai/DeepSeek-V4-Pro",
+    SILICONFLOW_DEFAULT_MODEL,
     "deepseek-ai/DeepSeek-V4-Flash",
     "MiniMaxAI/MiniMax-M2.5",
     "deepseek-ai/DeepSeek-V3.2",
@@ -541,7 +560,89 @@ def filter_models(available_models: List[str]) -> List[str]:
 
 def select_default_model(available_models: List[str]) -> str:
     """默认模型 = ALLOWED_MODELS 中第一个真实可用的（即 DeepSeek-V4-Pro 优先）。"""
-    return available_models[0] if available_models else "deepseek-ai/DeepSeek-V4-Pro"
+    return available_models[0] if available_models else SILICONFLOW_DEFAULT_MODEL
+
+
+def normalize_api_base_url(value: str) -> Optional[str]:
+    """校验并规范化用户输入的 OpenAI 兼容 API Base URL。"""
+    value = value.strip().rstrip('/')
+    parsed = urlparse(value)
+    if parsed.scheme not in ('http', 'https') or not parsed.netloc:
+        return None
+    return value
+
+
+def _show_custom_provider_examples() -> None:
+    print("\n📚 常见 OpenAI 兼容 API Base URL 示例:")
+    print("  • OpenAI:    https://api.openai.com/v1              （需要 /v1）")
+    print("  • DeepSeek:  https://api.deepseek.com               （官方示例不加 /v1）")
+    print("  • OpenRouter:https://openrouter.ai/api/v1            （需要 /api/v1）")
+    print("  • Ollama:    http://localhost:11434/v1               （需要 /v1）")
+    print("⚠️  每家供应商规则不同；请输入官方文档给出的完整 Base URL，本程序不会自动追加 /v1。")
+
+
+def choose_api_provider(
+    provider_choice: Optional[str] = None,
+    api_base_url: Optional[str] = None,
+    model: Optional[str] = None,
+    allow_cancel: bool = False,
+) -> Optional[ApiProvider]:
+    """选择 SiliconFlow 或收集自定义 OpenAI 兼容 API 设置。"""
+    choice = (provider_choice or '').strip().lower()
+    if not choice:
+        print("\n🌐 选择 API 供应商")
+        print("SiliconFlow 模式会自动检测可用模型，并默认使用 DeepSeek-V4-Pro。")
+        print("自定义模式适用于 OpenAI、DeepSeek、OpenRouter、Ollama 等兼容接口。")
+        while True:
+            raw = input("是否使用硅基流动 API？[Y/n]（输入 cancel 取消）: ").strip().lower()
+            if allow_cancel and raw in ('cancel', 'back', '0', '返回'):
+                return None
+            if raw in ('', 'y', 'yes', '是', '1'):
+                choice = 'siliconflow'
+                break
+            if raw in ('n', 'no', '否', '2', 'custom'):
+                choice = 'custom'
+                break
+            print("❌ 请输入 y 或 n")
+
+    if choice in ('siliconflow', 'sf'):
+        return ApiProvider(
+            name="SiliconFlow",
+            api_base_url=SILICONFLOW_API_BASE_URL,
+            default_model=SILICONFLOW_DEFAULT_MODEL,
+            is_siliconflow=True,
+        )
+    if choice != 'custom':
+        print(f"❌ 不支持的供应商类型: {provider_choice}")
+        return None
+
+    _show_custom_provider_examples()
+    normalized_url = normalize_api_base_url(api_base_url or '')
+    while not normalized_url:
+        if api_base_url:
+            print(f"❌ API Base URL 无效: {api_base_url}")
+            api_base_url = None
+        raw_url = input("请输入完整的 API Base URL（输入 cancel 取消）: ").strip()
+        if allow_cancel and raw_url.lower() in ('cancel', 'back', '0', '返回'):
+            return None
+        normalized_url = normalize_api_base_url(raw_url)
+        if not normalized_url:
+            print("❌ URL 必须以 http:// 或 https:// 开头，并包含有效主机名")
+
+    selected_model = (model or '').strip()
+    while not selected_model:
+        selected_model = input("请输入该供应商的模型 ID（例如 gpt-5）: ").strip()
+        if allow_cancel and selected_model.lower() in ('cancel', 'back', '0', '返回'):
+            return None
+        if not selected_model:
+            print("❌ 模型 ID 不能为空")
+
+    return ApiProvider(
+        name=urlparse(normalized_url).netloc,
+        api_base_url=normalized_url,
+        default_model=selected_model,
+        is_siliconflow=False,
+    )
 
 
 """
@@ -560,6 +661,10 @@ Fallback 路径：portable 这条路全失败时，回退到系统 pip + shell-g
 PORTABLE_PYTHON_VERSION = "3.12"
 PORTABLE_PYTHON_DIR = Path.home() / ".local" / "share" / "sgpt-portable-python"
 SGPT_WRAPPER = Path.home() / ".local" / "bin" / "sgpt"
+# shell-gpt 的 CLI 会直接 import click；portable Python 本身不自带它，必须显式安装。
+PORTABLE_SGPT_PACKAGES = ("click>=8.1,<9", "shell-gpt")
+LOCAL_BIN_EXPORT_COMMENT = "# Added by auto-shell-gpt: 让 pip --user 装的 CLI 命令进入 PATH"
+LOCAL_BIN_EXPORT_LINE = 'export PATH="$HOME/.local/bin:$PATH"'
 
 # 国内 github-release 镜像候选（覆盖 astral-sh/python-build-standalone）。
 # 不预先排序，每次都并发测速，按延迟取最快的可用项。
@@ -911,6 +1016,33 @@ def _create_sgpt_wrapper(python_bin: str) -> None:
     SGPT_WRAPPER.chmod(0o755)
 
 
+def _verify_portable_shell_gpt(python_bin: str) -> bool:
+    """确认 portable 环境具备 sgpt 启动所需的 click 和 CLI 入口。"""
+    try:
+        result = subprocess.run(
+            [python_bin, "-c", "import click"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except Exception as exc:
+        print(f"  ❌ 无法验证 portable Python 的 click: {exc}")
+        return False
+
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout).strip()
+        print("  ❌ portable Python 中 click 仍不可用")
+        if detail:
+            print(f"     {detail}")
+        return False
+
+    portable_sgpt = Path(python_bin).parent / "sgpt"
+    if not portable_sgpt.is_file():
+        print(f"  ❌ shell-gpt 已安装，但未找到 CLI 入口: {portable_sgpt}")
+        return False
+    return True
+
+
 def _get_installed_package_version(python_bin: str, package: str) -> str:
     """通过 pip 元数据读取版本号，避免 import 包时触发交互式初始化。"""
     try:
@@ -978,7 +1110,7 @@ def _get_shell_gpt_handler_path(python_bin: str) -> Optional[Path]:
 
 
 def install_shell_gpt_into_portable(python_bin: str) -> bool:
-    """用 portable Python 的 pip 装 shell-gpt 1.5.x，然后写包装脚本。"""
+    """用 portable Python 的 pip 装 click 和 shell-gpt，然后写包装脚本。"""
     mirrors = get_pip_mirrors_sorted()
     if not mirrors:
         mirrors = [DEFAULT_PIP_MIRROR]
@@ -994,9 +1126,12 @@ def install_shell_gpt_into_portable(python_bin: str) -> bool:
             "--timeout", "30",
             "--retries", "3",
             "--disable-pip-version-check",
-            "shell-gpt",
+            *PORTABLE_SGPT_PACKAGES,
         ]
         if _run_with_spinner(cmd, label=f"装 shell-gpt ({name})"):
+            if not _verify_portable_shell_gpt(python_bin):
+                print(f"⚠️  {name} 返回安装成功，但 portable 环境校验失败，自动切下一个...")
+                continue
             _create_sgpt_wrapper(python_bin)
             version = _get_installed_package_version(python_bin, "shell-gpt")
             print(f"✅ shell-gpt 安装成功！包装脚本: {SGPT_WRAPPER}")
@@ -1122,6 +1257,44 @@ def _get_config_path() -> Path:
     return Path.home() / '.config' / 'shell_gpt' / '.sgptrc'
 
 
+def get_api_provider_from_config() -> Optional[ApiProvider]:
+    """从现有 .sgptrc 还原供应商设置，兼容旧版 SiliconFlow 配置。"""
+    config_file = _get_config_path()
+    if not config_file.exists():
+        return None
+
+    values: Dict[str, str] = {}
+    try:
+        with open(config_file, 'r') as f:
+            for line in f:
+                stripped = line.strip()
+                if '=' not in stripped or stripped.startswith('#'):
+                    continue
+                key, value = stripped.split('=', 1)
+                if key in ('API_BASE_URL', 'DEFAULT_MODEL'):
+                    values[key] = value
+    except Exception:
+        return None
+
+    api_base_url = normalize_api_base_url(
+        values.get('API_BASE_URL', SILICONFLOW_API_BASE_URL)
+    )
+    if not api_base_url:
+        return None
+    is_siliconflow = api_base_url == SILICONFLOW_API_BASE_URL
+    default_model = values.get('DEFAULT_MODEL') or (
+        SILICONFLOW_DEFAULT_MODEL if is_siliconflow else ''
+    )
+    if not default_model:
+        return None
+    return ApiProvider(
+        name="SiliconFlow" if is_siliconflow else urlparse(api_base_url).netloc,
+        api_base_url=api_base_url,
+        default_model=default_model,
+        is_siliconflow=is_siliconflow,
+    )
+
+
 def update_config_keys(updates: Dict[str, str]) -> bool:
     """
     更新 .sgptrc 中的若干键值（保留其他行不变；不存在的键追加到末尾），
@@ -1156,7 +1329,11 @@ def update_config_keys(updates: Dict[str, str]) -> bool:
     return True
 
 
-def create_config_file(api_key: str, default_model: str):
+def create_config_file(
+    api_key: str,
+    default_model: str,
+    api_base_url: str = SILICONFLOW_API_BASE_URL,
+):
     """创建shell-gpt配置文件"""
     # 获取用户信息
     username = os.getenv('LOGNAME') or os.getenv('USER') or 'default_user'
@@ -1183,7 +1360,7 @@ CODE_THEME=dracula
 OPENAI_FUNCTIONS_PATH={home_dir}/.config/shell_gpt/functions
 OPENAI_USE_FUNCTIONS={use_functions}
 SHOW_FUNCTIONS_OUTPUT=false
-API_BASE_URL=https://api.siliconflow.cn/v1
+API_BASE_URL={api_base_url}
 PRETTIFY_MARKDOWN=true
 USE_LITELLM=false
 OPENAI_API_KEY={api_key}
@@ -1197,6 +1374,7 @@ SHELL_NAME=auto"""
 
     print(f"✅ 配置文件已创建: {config_file} (权限 600)")
     print(f"📁 使用的默认模型: {default_model}")
+    print(f"🌐 API Base URL: {api_base_url}")
     print(f"🛠️  function calling: {use_functions}")
     print(f"👤 用户名: {username}")
 
@@ -1224,14 +1402,47 @@ def _get_cleanup_targets() -> List[Tuple[str, Path]]:
     ]
 
 
-def uninstall_shell_gpt():
+def _remove_managed_path_exports() -> List[Path]:
+    """只移除本程序写入 shell rc 文件的精确两行，不碰用户其他 PATH 配置。"""
+    updated: List[Path] = []
+    for rc in (Path.home() / ".bashrc", Path.home() / ".zshrc"):
+        if not rc.exists():
+            continue
+        try:
+            lines = rc.read_text().splitlines(keepends=True)
+        except Exception:
+            continue
+
+        new_lines: List[str] = []
+        removed = False
+        index = 0
+        while index < len(lines):
+            if lines[index].strip() == LOCAL_BIN_EXPORT_COMMENT:
+                removed = True
+                index += 1
+                if index < len(lines) and lines[index].strip() == LOCAL_BIN_EXPORT_LINE:
+                    index += 1
+                continue
+            new_lines.append(lines[index])
+            index += 1
+
+        if removed:
+            try:
+                rc.write_text(''.join(new_lines))
+                updated.append(rc)
+            except Exception:
+                pass
+    return updated
+
+
+def uninstall_shell_gpt(assume_yes: bool = False):
     """
     彻底清理 shell-gpt 安装痕迹：
       1. pip 卸载 shell-gpt 包（用 sys.executable，所以请在装它的同一个 Python 环境里运行）
       2. 删除 ~/.config/shell_gpt 整个目录（含 .sgptrc、roles/、functions/）
       3. 删除 /tmp/chat_cache_<user>/ 和 /tmp/cache_<user>/
       4. 删除 ~/.cache/shell_gpt（如果存在）
-    本脚本从未改过 .bashrc/.zshrc，所以不存在 PATH 残留。
+      5. 移除本程序曾写入 .bashrc/.zshrc 的 PATH 配置块
     """
     print("\n🧹 完全卸载 Shell-GPT")
     print("=" * 40)
@@ -1247,14 +1458,17 @@ def uninstall_shell_gpt():
     print("\n⚠️  如果你当时是在某个 conda 环境里装的 shell-gpt，")
     print("    请先 `conda activate <那个环境>` 再回来跑这个清理，否则 pip 卸不掉包。")
 
-    try:
-        confirm = input("\n确认清理？(yes/no): ").strip().lower()
-    except KeyboardInterrupt:
-        print("\n操作已取消")
-        return
-    if confirm not in ('y', 'yes', '是'):
-        print("已取消，未做任何改动")
-        return
+    if not assume_yes:
+        try:
+            confirm = input("\n确认清理？(yes/no): ").strip().lower()
+        except KeyboardInterrupt:
+            print("\n操作已取消")
+            return False
+        if confirm not in ('y', 'yes', '是'):
+            print("已取消，未做任何改动")
+            return False
+    else:
+        print("\n⚡ 已启用 --yes，跳过确认")
 
     # 1. pip uninstall —— 静默执行，最后只报告结果
     print("\n1️⃣ 卸载 shell-gpt 包...")
@@ -1279,16 +1493,24 @@ def uninstall_shell_gpt():
             print(f"   ⏭️  {label} 不存在: {p}")
             continue
         try:
-            _sh.rmtree(p)
+            if p.is_dir() and not p.is_symlink():
+                _sh.rmtree(p)
+            else:
+                p.unlink()
             print(f"   ✅ 已删除 {label}: {p}")
         except Exception as e:
             print(f"   ❌ 删除 {p} 失败: {e}")
 
-    # 3. 顺手清掉 session 内的可用模型缓存，避免后续重装时残留
+    # 3. 移除本程序写入的 PATH 配置块
+    updated_rc_files = _remove_managed_path_exports()
+    for rc in updated_rc_files:
+        print(f"   ✅ 已移除 PATH 配置: {rc}")
+
+    # 4. 顺手清掉 session 内的可用模型缓存，避免后续重装时残留
     _cached_available_models.clear()
 
     print("\n✅ 清理完成！系统已恢复到安装 shell-gpt 之前的状态")
-    print("💡 本脚本从未改过你的 .bashrc/.zshrc，所以没有 PATH 残留要清")
+    return True
 
 
 def show_menu():
@@ -1296,7 +1518,7 @@ def show_menu():
     print("\n🎯 请选择操作:")
     print("1️⃣  自动安装并配置Shell-GPT")
     print("2️⃣  选择/切换模型")
-    print("3️⃣  重新设置API密钥")
+    print("3️⃣  重新设置API供应商 / 密钥")
     print("4️⃣  显示当前配置")
     print("5️⃣  🧹 完全卸载（删除所有安装痕迹）")
     print("0️⃣  退出")
@@ -1315,7 +1537,11 @@ def get_user_choice() -> str:
         print("❌ 无效选择，请输入0-5之间的数字")
 
 
-def interactive_set_api_key(allow_cancel: bool = False, test_connection: bool = True) -> Optional[str]:
+def interactive_set_api_key(
+    allow_cancel: bool = False,
+    test_connection: bool = True,
+    minimum_length: int = 10,
+) -> Optional[str]:
     """
     交互式设置API密钥（带实时星号显示）
     输入时显示*，输入完成后自动测试连接
@@ -1340,8 +1566,8 @@ def interactive_set_api_key(allow_cancel: bool = False, test_connection: bool = 
                 return None
 
             # 简单验证长度
-            if len(api_key) < 10:
-                print("❌ API密钥似乎太短（至少10个字符），请重新输入")
+            if len(api_key) < minimum_length:
+                print(f"❌ API密钥似乎太短（至少{minimum_length}个字符），请重新输入")
                 continue
 
             # 显示马赛克版本
@@ -1365,6 +1591,69 @@ def interactive_set_api_key(allow_cancel: bool = False, test_connection: bool = 
             if allow_cancel:
                 return None
             raise
+
+
+def configure_api_access(
+    provided_key: Optional[str] = None,
+    provider_choice: Optional[str] = None,
+    api_base_url: Optional[str] = None,
+    model: Optional[str] = None,
+    allow_cancel: bool = False,
+    reuse_existing_key: bool = True,
+) -> Optional[Tuple[ApiProvider, str]]:
+    """收集供应商、Base URL、模型和密钥；仅 SiliconFlow 做专用联网验证。"""
+    provider = choose_api_provider(
+        provider_choice=provider_choice,
+        api_base_url=api_base_url,
+        model=model,
+        allow_cancel=allow_cancel,
+    )
+    if not provider:
+        return None
+
+    current_provider = get_api_provider_from_config()
+    api_key = (provided_key or '').strip()
+    if (
+        reuse_existing_key
+        and not api_key
+        and current_provider
+        and current_provider.api_base_url == provider.api_base_url
+    ):
+        api_key = get_api_key_from_config() or ''
+
+    if api_key:
+        print(f"🔍 使用 API 密钥: {mask_api_key(api_key)}")
+        if provider.is_siliconflow:
+            print("🔗 正在验证 SiliconFlow API 密钥...")
+            if test_api_connection(api_key):
+                print("✅ API 连接正常")
+                return provider, api_key
+            api_key = ''
+        else:
+            print("💡 自定义供应商跳过自动验证，避免误判不支持 /models 的兼容接口")
+            return provider, api_key
+
+    if provider.is_siliconflow:
+        print("\n📊 如何获取 SiliconFlow API 密钥:")
+        print("🎁 新用户可通过注册链接获取免费额度")
+        print("🔗 https://cloud.siliconflow.cn/i/pnTWTpiB")
+        api_key = interactive_set_api_key(
+            allow_cancel=allow_cancel,
+            test_connection=True,
+            minimum_length=10,
+        ) or ''
+    else:
+        print(f"\n🔑 请输入 {provider.name} 的 API 密钥")
+        print("💡 本地 Ollama 等服务也需要填写一个占位值，例如 ollama")
+        api_key = interactive_set_api_key(
+            allow_cancel=allow_cancel,
+            test_connection=False,
+            minimum_length=1,
+        ) or ''
+
+    if not api_key:
+        return None
+    return provider, api_key
 
 
 def show_current_config(api_key: Optional[str] = None):
@@ -1407,10 +1696,37 @@ def show_current_config(api_key: Optional[str] = None):
         print(f"❌ 读取配置文件失败: {e}")
 
 
-def switch_model(api_key: str):
+def switch_model(api_key: str, provider: Optional[ApiProvider] = None):
     """选择/切换模型"""
     print("\n🔄 选择/切换模型")
     print("-" * 20)
+
+    provider = provider or get_api_provider_from_config()
+    if not provider:
+        print("❌ 配置文件不存在，请先进行完整安装")
+        return
+
+    if not provider.is_siliconflow:
+        print(f"🌐 当前自定义 API: {provider.api_base_url}")
+        try:
+            selected_model = input(
+                "请输入新的模型 ID（输入 0/back/cancel 返回）: "
+            ).strip()
+        except KeyboardInterrupt:
+            print("\n↩️  操作已取消，返回主菜单")
+            return
+        if selected_model.lower() in ('', '0', 'back', 'cancel', '返回'):
+            print("↩️  返回主菜单")
+            return
+        if not update_config_keys({
+            "DEFAULT_MODEL": selected_model,
+            "OPENAI_USE_FUNCTIONS": "true" if model_supports_functions(selected_model) else "false",
+        }):
+            print("❌ 配置文件不存在，请先进行完整安装")
+            return
+        print(f"✅ 模型已切换为: {selected_model}")
+        print("💡 自定义供应商不会自动探测模型，请确认模型 ID 与供应商文档一致")
+        return
 
     available_models = get_available_models_cached(api_key, show_progress=True)
     if not available_models:
@@ -1473,20 +1789,34 @@ def switch_model(api_key: str):
         print(f"❌ 更新配置文件失败: {e}")
 
 
-def auto_install(api_key: str) -> bool:
+def auto_install(api_key: str, provider: Optional[ApiProvider] = None) -> bool:
     """自动安装流程"""
+    provider = provider or ApiProvider(
+        name="SiliconFlow",
+        api_base_url=SILICONFLOW_API_BASE_URL,
+        default_model=SILICONFLOW_DEFAULT_MODEL,
+        is_siliconflow=True,
+    )
     print("\n🚀 开始自动安装Shell-GPT")
     print("=" * 40)
+    print(f"🌐 API 供应商: {provider.name}")
+    print(f"🔗 API Base URL: {provider.api_base_url}")
 
-    # 1. 获取可用模型（API已在main()中验证过）
-    print("1️⃣ 获取可用模型...")
-    available_models = get_available_models_cached(api_key, show_progress=True)
-    if not available_models:
-        print("⚠️  警告: 无可用模型，将使用默认配置")
-        default_model = "deepseek-ai/DeepSeek-V4-Pro"
+    # 1. SiliconFlow 自动探测白名单模型；自定义供应商使用用户填写的模型 ID。
+    if provider.is_siliconflow:
+        print("1️⃣ 获取可用模型...")
+        available_models = get_available_models_cached(api_key, show_progress=True)
+        if not available_models:
+            print("⚠️  警告: 无可用模型，将使用默认配置")
+            default_model = SILICONFLOW_DEFAULT_MODEL
+        else:
+            default_model = select_default_model(available_models)
+            print(f"✅ 找到 {len(available_models)} 个真实可用模型")
     else:
-        default_model = select_default_model(available_models)
-        print(f"✅ 找到 {len(available_models)} 个真实可用模型")
+        print("1️⃣ 使用自定义供应商模型...")
+        default_model = provider.default_model
+        print(f"✅ 模型 ID: {default_model}")
+        print("💡 已跳过 SiliconFlow 专用的模型目录与可用性探测")
 
     # 2. 安装shell-gpt
     print("\n2️⃣ 安装shell-gpt...")
@@ -1495,7 +1825,7 @@ def auto_install(api_key: str) -> bool:
 
     # 3. 创建配置文件
     print("\n3️⃣ 创建配置文件...")
-    create_config_file(api_key, default_model)
+    create_config_file(api_key, default_model, provider.api_base_url)
 
     # 4. 提供测试用例
     print("\n🎉 安装配置完成!")
@@ -1526,7 +1856,6 @@ def _ensure_local_bin_in_path() -> None:
     if local_bin in current_path.split(":"):
         return
 
-    export_line = 'export PATH="$HOME/.local/bin:$PATH"'
     rc_files: List[Path] = [Path.home() / ".bashrc"]
     zshrc = Path.home() / ".zshrc"
     if zshrc.exists():
@@ -1539,13 +1868,13 @@ def _ensure_local_bin_in_path() -> None:
         except Exception:
             existing = ""
         # 幂等检查：精确匹配那一行（含/不含 export 关键字、有无前导空格都算）
-        if any(line.strip() == export_line for line in existing.splitlines()):
+        if any(line.strip() == LOCAL_BIN_EXPORT_LINE for line in existing.splitlines()):
             continue
         # 追加到末尾，前面带一个空行作分隔，加个注释让用户知道是谁加的
         try:
             with open(rc, "a") as f:
-                f.write("\n# Added by auto-shell-gpt: 让 pip --user 装的 CLI 命令进入 PATH\n")
-                f.write(export_line + "\n")
+                f.write("\n" + LOCAL_BIN_EXPORT_COMMENT + "\n")
+                f.write(LOCAL_BIN_EXPORT_LINE + "\n")
             updated.append(str(rc))
         except Exception:
             pass
@@ -1557,71 +1886,60 @@ def _ensure_local_bin_in_path() -> None:
 
 def main():
     """主函数"""
-    _ensure_local_bin_in_path()
     # 解析命令行参数
     parser = argparse.ArgumentParser(
-        description='Shell-GPT 自动安装配置脚本 v1.12.1',
+        description='Shell-GPT 自动安装配置脚本 v1.13.0',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 示例用法:
   python setup_shell_gpt.py                        # 交互式菜单
   python setup_shell_gpt.py --key sk-xxx           # 直接指定API密钥
-  python setup_shell_gpt.py --auto --key sk-xxx    # 自动安装模式
-  python setup_shell_gpt.py --uninstall            # 完全卸载（不需要API密钥）
+  python setup_shell_gpt.py --auto --provider siliconflow --key sk-xxx
+  python setup_shell_gpt.py --auto --provider custom --base-url https://api.openai.com/v1 --model gpt-5 --key sk-xxx
+  python setup_shell_gpt.py --uninstall --yes       # 一键完全卸载，无需确认
         """
     )
 
     parser.add_argument('--key', '-k', help='API密钥')
     parser.add_argument('--auto', '-a', action='store_true', help='自动安装模式（跳过菜单）')
     parser.add_argument('--uninstall', action='store_true', help='完全卸载，不需要API密钥')
+    parser.add_argument('--yes', '-y', action='store_true', help='与 --uninstall 连用，跳过删除确认')
+    parser.add_argument(
+        '--provider', choices=('siliconflow', 'custom'),
+        help='API供应商；自动模式不指定时会交互询问',
+    )
+    parser.add_argument('--base-url', help='自定义供应商的完整 OpenAI 兼容 API Base URL')
+    parser.add_argument('--model', help='自定义供应商的模型 ID')
 
     args = parser.parse_args()
 
-    print("🚀 Shell-GPT 自动安装配置脚本 v1.12.1")
+    print("🚀 Shell-GPT 自动安装配置脚本 v1.13.0")
     print("🔒 隐私保护 | 🚄 自动选择最快pip镜像")
     print("=" * 50)
 
-    # 卸载模式：不需要 API key，直接走清理流程
+    # 卸载必须先于 PATH 初始化，避免清理时反而向 shell rc 文件写入新配置。
     if args.uninstall:
-        uninstall_shell_gpt()
-        return True
+        return bool(uninstall_shell_gpt(assume_yes=args.yes))
 
-    # 获取并验证API密钥
-    api_key = get_api_key(args.key)
+    _ensure_local_bin_in_path()
 
-    if api_key:
-        # 找到已有密钥，验证是否有效
-        masked = mask_api_key(api_key)
-        print(f"🔍 找到API密钥: {masked}")
-        print("🔗 验证中...")
-
-        if test_api_connection(api_key):
-            print("✅ API连接正常")
-        else:
-            # 验证失败，需要重新输入
-            api_key = None
-
-    if not api_key:
-        # 需要用户输入密钥
-        print("❌ 需要有效的API密钥")
-        print("\n📊 如何获取API密钥:")
-        print("🎁 新用户福利: 使用下面的链接注册可以获得双倍免费额度!")
-        print("🔗 注册地址: https://cloud.siliconflow.cn/i/pnTWTpiB")
-
-        try:
-            api_key = interactive_set_api_key(allow_cancel=False, test_connection=True)
-            if not api_key:
-                print("\n操作已取消")
-                return False
-        except KeyboardInterrupt:
+    # 自动模式可通过参数完全无交互；未指定供应商时按需求弹出确认。
+    if args.auto:
+        configured = configure_api_access(
+            provided_key=args.key,
+            provider_choice=args.provider,
+            api_base_url=args.base_url,
+            model=args.model,
+            allow_cancel=False,
+        )
+        if not configured:
             print("\n操作已取消")
             return False
+        provider, api_key = configured
+        return auto_install(api_key, provider)
 
-    # 如果指定了自动模式，直接安装
-    if args.auto:
-        return auto_install(api_key)
-
-    # 交互式菜单模式
+    # 交互式菜单不再预先索要 SiliconFlow key，因此无配置时也能直接查看或卸载。
+    session_api_key = args.key
     while True:
         show_menu()
         try:
@@ -1631,20 +1949,48 @@ def main():
                 print("👋 再见!")
                 break
             elif choice == '1':
-                auto_install(api_key)
+                configured = configure_api_access(
+                    provided_key=session_api_key,
+                    provider_choice=args.provider,
+                    api_base_url=args.base_url,
+                    model=args.model,
+                    allow_cancel=True,
+                )
+                if configured:
+                    provider, session_api_key = configured
+                    auto_install(session_api_key, provider)
+                else:
+                    print("❌ 操作已取消")
             elif choice == '2':
-                switch_model(api_key)
+                provider = get_api_provider_from_config()
+                api_key = get_api_key_from_config()
+                if not provider or not api_key:
+                    print("❌ 尚无完整配置，请先选择选项 1 进行安装")
+                    continue
+                switch_model(api_key, provider)
             elif choice == '3':
-                new_key = interactive_set_api_key(allow_cancel=True, test_connection=True)
-                if new_key:
-                    api_key = new_key
-                    print("✅ API密钥已更新并验证成功")
+                configured = configure_api_access(allow_cancel=True, reuse_existing_key=False)
+                if configured:
+                    provider, session_api_key = configured
+                    use_functions = (
+                        "true" if model_supports_functions(provider.default_model) else "false"
+                    )
+                    if update_config_keys({
+                        "API_BASE_URL": provider.api_base_url,
+                        "OPENAI_API_KEY": session_api_key,
+                        "DEFAULT_MODEL": provider.default_model,
+                        "OPENAI_USE_FUNCTIONS": use_functions,
+                    }):
+                        print("✅ API供应商、密钥和默认模型已更新")
+                    else:
+                        print("💡 设置已保留在当前会话；请选择选项 1 完成安装并写入配置")
                 else:
                     print("❌ 操作已取消，保持原有设置")
             elif choice == '4':
-                show_current_config(api_key)
+                show_current_config(session_api_key)
             elif choice == '5':
-                uninstall_shell_gpt()
+                if uninstall_shell_gpt():
+                    break
 
         except KeyboardInterrupt:
             print("\n\n👋 操作已取消，再见!")

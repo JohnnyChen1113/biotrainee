@@ -1,8 +1,8 @@
 # auto-shell-gpt
 
-Shell-GPT 自动安装和配置工具,专门为**国内教学场景**优化。
+Shell-GPT 自动安装和配置工具,专门为**入门教学场景**优化。
 
-接入 [SiliconFlow](https://siliconflow.cn/) 的 LLM API,**全程走国内镜像源**,在严格白名单网络下也能装上。
+默认接入 [SiliconFlow](https://siliconflow.cn/),也支持 OpenAI、DeepSeek、OpenRouter、Ollama 等 OpenAI 兼容 API；安装依赖**全程走国内镜像源**。
 
 ## 特性
 
@@ -10,6 +10,7 @@ Shell-GPT 自动安装和配置工具,专门为**国内教学场景**优化。
 - 🌐 **多源 PyPI failover** — 8 个国内 PyPI 镜像自动按速度排序,挂一个自动切下一个
 - 🧠 **真实模型可用性检测** — 并发 ping 候选模型,只保留实际能调用的
 - 🎯 **白名单模型** — 10 个 SiliconFlow 候选模型(默认 DeepSeek-V4-Pro，另含 DeepSeek-V4-Flash、Qwen3.6、GLM-4.5、Step-3.5 等)
+- 🔌 **自定义供应商** — 可填写 OpenAI 兼容 API Base URL 与模型 ID，不再绑定 SiliconFlow
 - 🔒 **安全** — 配置文件自动 chmod 600,API key 不会被同机器其他用户读到
 - 🧹 **一键卸载** — 完全恢复安装前状态,不留痕
 
@@ -18,7 +19,7 @@ Shell-GPT 自动安装和配置工具,专门为**国内教学场景**优化。
 ```bash
 pip install --no-warn-script-location -i https://repo.huaweicloud.com/repository/pypi/simple auto-shell-gpt && \
   export PATH="$HOME/.local/bin:$PATH" && \
-  auto-shell-gpt --auto --key sk-YOUR_SILICONFLOW_KEY
+  auto-shell-gpt --auto --provider siliconflow --key sk-YOUR_SILICONFLOW_KEY
 ```
 
 三步 `&&` 串联:静默装包 → 临时给当前 shell 的 PATH 加上 `~/.local/bin` → 直接跑 `auto-shell-gpt`。
@@ -36,9 +37,35 @@ auto-shell-gpt
 
 # 完全卸载
 auto-shell-gpt --uninstall
+
+# 测试时一键卸载，不再询问确认
+auto-shell-gpt --uninstall --yes
 ```
 
 会清理:`~/.config/shell_gpt/`、`/tmp/chat_cache_*`、`/tmp/cache_*`、`~/.cache/shell_gpt`、`~/.local/share/sgpt-portable-python/`、`~/.local/bin/sgpt`。
+
+## 使用其他 API 供应商
+
+交互运行 `auto-shell-gpt` 后选择安装，程序会先询问是否使用 SiliconFlow。选择自定义后，需要填写供应商的完整 OpenAI 兼容 Base URL 和模型 ID。
+
+```text
+OpenAI:     https://api.openai.com/v1       # 末尾需要 /v1
+DeepSeek:   https://api.deepseek.com        # 官方示例不加 /v1
+OpenRouter: https://openrouter.ai/api/v1     # 末尾需要 /api/v1
+Ollama:     http://localhost:11434/v1        # 末尾需要 /v1
+```
+
+不同供应商的路径规则并不相同，程序不会擅自追加 `/v1`。请按供应商官方文档填写完整地址。
+
+也可以无交互安装，例如：
+
+```bash
+auto-shell-gpt --auto \
+  --provider custom \
+  --base-url https://api.openai.com/v1 \
+  --model gpt-5 \
+  --key sk-YOUR_OPENAI_KEY
+```
 
 ## 注册获取 API key
 
